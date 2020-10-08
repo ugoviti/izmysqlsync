@@ -155,9 +155,10 @@ izsyncmysql() {
    if [ $ssh = 1 ];then
      ssh_run "$query_dump" | $query_import 2>&1 | grep -v 'Using a password on the command line interface can be insecure'
     else
-     echo "$(log) => running query: $query_dump | $query_import"
-     $query_dump | $query_import
-     #$query_dump | sed -E 's/DEFINER=`([^`]+?)`@`([^`]+?)`/DEFINER=CURRENT_USER/g' | $query_import
+     #sync_cmd="$query_dump | $query_import"
+     sync_cmd="$query_dump | sed -E -e 's/DEFINER=\`([^\`]+?)\`@\`([^\`]+?)\`/DEFINER=CURRENT_USER/g' -e 's/,NO_AUTO_CREATE_USER//g' | $query_import"
+     echo "$(log) => running query: $sync_cmd"
+     eval $sync_cmd
    fi
  
    echo "$(log) [$n/$src_db_tot] END processing DB: $src_db"
