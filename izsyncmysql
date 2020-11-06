@@ -1,7 +1,7 @@
 #!/bin/bash
 # izsyncmysql: mysql database direct replicate/export/import script
 # written by Ugo Viti <ugo.viti@initzero.it>
-# version: 20201008
+# version: 20201106
 
 ## Examples:
 
@@ -136,14 +136,16 @@ izsyncmysql() {
  
    # drop and recreate empty destination db if specified
    if [ "$dst_db_drop" = "1" ]; then
+     [ ! -z $dst_port ] && mysqladmin_opts+="--port=$dst_port"
      # if destination db exist, drop it before creating
      if [ ! -z "$(mysql_query_dst mysql "SHOW DATABASES LIKE \"$dst_db\";")" ]; then
        echo "$(log) => dropping destination DB: ($dst_uri)"
-       mysqladmin -h "$dst_host" -u "$dst_username" --password="$dst_password" drop "$dst_db" -f 2>&1 | grep -v "Warning: Using a password" | grep -v '^Database.* dropped$'
+       mysqladmin -h "$dst_host" -u "$dst_username" --password="$dst_password" $mysqladmin_opts drop "$dst_db" -f 2>&1 | grep -v "Warning: Using a password" | grep -v '^Database.* dropped$'
      fi
      echo "$(log) => creating empty DB: ($dst_uri)"
-     mysqladmin -h "$dst_host" -u "$dst_username" --password="$dst_password" create "$dst_db" 2>&1 | grep -v "Warning: Using a password"
+     mysqladmin -h "$dst_host" -u "$dst_username" --password="$dst_password" $mysqladmin_opts create "$dst_db" 2>&1 | grep -v "Warning: Using a password"
    fi
+
  
    # export / import db single pass
    local query_dump="mysqldump $mysqldump_opts -h $src_host --port=$src_port -u $src_username $([ -n "$src_password" ] && echo "--password=$src_password" || echo "-p" ) $src_db $([ $export_views = 0 ] && for view in $mysql_viewlist; do echo -n '--ignore-table=$src_db.$view '; done)"
