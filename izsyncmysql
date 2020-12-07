@@ -1,7 +1,7 @@
 #!/bin/bash
 # izsyncmysql: mysql database direct replicate/export/import script
 # written by Ugo Viti <ugo.viti@initzero.it>
-# version: 20201106
+# version: 20201207
 
 ## Examples:
 
@@ -113,7 +113,7 @@ izsyncmysql() {
   dst_uri="mysql://$dst_username@$dst_host:$dst_port/$dst_db"
  
   echo "$(log) ----------------------------------------------"
-  [ $ssh = 1 ] && echo "    Tunnel SSH: ssh://$ssh_src_username@$ssh_src_host:$ssh_src_port"
+  [ $ssh = 1 ] && echo "               Tunnel SSH: ssh://$ssh_src_username@$ssh_src_host:$ssh_src_port"
   echo "               Source URI: $src_uri"
   echo "          Destination URI: $dst_uri"
   echo
@@ -154,14 +154,14 @@ izsyncmysql() {
  
    local query_import="mysql -h $dst_host -u $dst_username --password=$dst_password --port=$dst_port -f $dst_db"
  
-   if [ $ssh = 1 ];then
-     ssh_run "$query_dump" | $query_import 2>&1 | grep -v 'Using a password on the command line interface can be insecure'
-    else
-     #sync_cmd="$query_dump | $query_import"
-     sync_cmd="$query_dump | sed -E -e 's/DEFINER=\`([^\`]+?)\`@\`([^\`]+?)\`/DEFINER=CURRENT_USER/g' -e 's/,NO_AUTO_CREATE_USER//g' | $query_import"
-     echo "$(log) => running query: $sync_cmd"
-     eval $sync_cmd
-   fi
+   [ $ssh = 1 ] && sync_cmd+="ssh_run "
+   sync_cmd+="$query_dump "
+   sync_cmd+="| sed -E -e 's/DEFINER=\`([^\`]+?)\`@\`([^\`]+?)\`/DEFINER=CURRENT_USER/g' -e 's/,NO_AUTO_CREATE_USER//g' "
+   sync_cmd+="| $query_import "
+   
+   echo "$(log) => running query: $sync_cmd"
+
+   eval $sync_cmd
  
    echo "$(log) [$n/$src_db_tot] END processing DB: $src_db"
    let n+=1
