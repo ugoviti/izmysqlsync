@@ -1,9 +1,12 @@
 #!/bin/bash
 # izsyncmysql: mysql database direct replicate/export/import script
 # written by Ugo Viti <ugo.viti@initzero.it>
-# version: 20201207
+# version: 20210923
 
 ## Examples:
+
+#**copy local database into other database:**
+#  src_host='localhost' src_port=3306 src_username='root' src_password='PASSWORD' dst_host='localhost' dst_port=3306 dst_username='root' dst_password='PASSWORD' izsyncmysql DATABASE_SORGENTE DATABASE_DESTINAZIONE
 
 #**mysql replica via tcp 3306 singolo DB (mantain source DB name):**
 #  src_host='wms-database.prod.svc.cluster.local' src_port=3306 src_username='root' src_password='PASSWORD' dst_host='wms-database.test.svc.cluster.local' dst_port=3306 dst_username='root' dst_password='PASSWORD' izsyncmysql DATABASE_SORGENTE
@@ -49,7 +52,7 @@ export_views=1
 [[ -z "$dst_host" || -z "$dst_username" ]] && echo "ERROR: no destination host or username specified. exiting..." && exit 1
  
 # default mysqldump options
-mysqldump_opts="-C --force --opt --quote-names --default-character-set=utf8 --events --routines --triggers --hex-blob --single-transaction --quick --lock-tables=false"
+mysqldump_opts="-C --force --opt --quote-names --default-character-set=utf8 --events --routines --triggers --hex-blob --single-transaction --quick --lock-tables=false --column-statistics=0"
 #mysqldump_opts+=" --hex-blob --skip-triggers --set-gtid-purged=OFF --default-character-set=utf8"
  
 # add drop database if no src_db or dst_db is given
