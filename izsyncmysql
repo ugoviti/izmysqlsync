@@ -67,7 +67,8 @@ fi
 # SELECT table_schema AS "Database name", SUM(data_length + index_length) / 1024 / 1024 AS "Size (MB)" FROM information_schema.TABLES GROUP BY table_schema;
  
 ssh_run() {
-        ssh -o BatchMode=yes -o StrictHostKeyChecking=no -C -n $ssh_src_username@$ssh_src_host -p $ssh_src_port "$@"
+        #ssh -o BatchMode=yes -o StrictHostKeyChecking=no -C -n $ssh_src_username@$ssh_src_host -p $ssh_src_port "$@"
+        ssh -o StrictHostKeyChecking=no -C -n $ssh_src_username@$ssh_src_host -p $ssh_src_port "$@"
 }
  
 mysql_query_src() {
