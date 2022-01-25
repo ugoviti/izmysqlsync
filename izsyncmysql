@@ -1,7 +1,7 @@
 #!/bin/bash
 # izsyncmysql: mysql database direct replicate/export/import script
 # written by Ugo Viti <ugo.viti@initzero.it>
-# version: 20210923
+# version: 20220125
 
 ## Examples:
 
@@ -18,7 +18,7 @@
 #  ssh=1 ssh_src_host="www.cloudwms.it" ssh_src_port="32" src_host='127.0.0.1' src_username='root' src_password='PASSWORD' dst_host='127.0.0.1' dst_username='root' dst_password='PASSWORD' izsyncmysql DATABASE_SORGENTE
 
 #**mysql replica via Tunnel SSH of all DB and some excluded:**
-#  ssh=1 ssh_src_host="www.cloudwms.it" ssh_src_port="32" src_host='127.0.0.1' src_username='root' src_password='PASSWORD' src_db_exclude='-e information_schema -e performance_schema -e sys -e mysql' dst_host='127.0.0.1' dst_username='root' dst_password='PASSWORD' izsyncmysql
+#  ssh=1 ssh_src_username=initzero ssh_src_host="www.cloudwms.it" ssh_src_port="32" src_host='127.0.0.1' src_username='root' src_password='PASSWORD' src_db_exclude='-e information_schema -e performance_schema -e sys -e mysql' dst_host='127.0.0.1' dst_username='root' dst_password='PASSWORD' izsyncmysql
 
 
 src_db="$1"
@@ -27,6 +27,9 @@ dst_db="$1"
  
 export_views=1
  
+izsyncmysql_src_cfg="$HOME/izsyncmysql_src.cfg"
+izsyncmysql_dst_cfg="$HOME/izsyncmysql_dst.cfg"
+
 #set -x
  
 : ${ssh:=0}
@@ -51,6 +54,21 @@ export_views=1
 [[ -z "$src_host" || -z "$src_username" ]] && echo "ERROR: no source host or username specified. exiting..." && exit 1
 [[ -z "$dst_host" || -z "$dst_username" ]] && echo "ERROR: no destination host or username specified. exiting..." && exit 1
  
+# save mysql src logins
+echo "[client]
+host=$src_host
+port=$src_port
+user=$src_username
+$([ ! -z $src_password ] && echo password=$src_password)
+" > "$izsyncmysql_src_cfg"
+
+echo "[client]
+host=$dst_host
+port=$dst_port
+user=$dst_username
+$([ ! -z $dst_password ] && echo password=$dst_password)
+" > "$izsyncmysql_dst_cfg"
+
 # default mysqldump options
 mysqldump_opts="-C --force --opt --quote-names --default-character-set=utf8 --events --routines --triggers --hex-blob --single-transaction --quick --lock-tables=false --column-statistics=0"
 #mysqldump_opts+=" --hex-blob --skip-triggers --set-gtid-purged=OFF --default-character-set=utf8"
@@ -78,7 +96,7 @@ mysql_query_src() {
         local port=$src_port
         local username=$src_username
         local password=$src_password
-	mysql_query $dbname $@
+        mysql_query $izsyncmysql_src_cfg $dbname $@
 }
  
 mysql_query_dst() {
@@ -88,14 +106,15 @@ mysql_query_dst() {
         local port=$dst_port
         local username=$dst_username
         local password=$dst_password
-	mysql_query $dbname $@
+        mysql_query $izsyncmysql_dst_cfg $dbname $@
 }
  
 mysql_query() {
+        local extrafile=$1
+        shift
         local dbname=$1
         shift
-        local query="mysql -h $host --port=$port -u $username $([ -n $password ] && echo "--password=$password" || echo "-p" ) --batch --skip-column-names --raw '$dbname' --execute='$@' 2>&1 | grep -v 'Using a password on the command line interface can be insecure'"
-        #local query="mysql -h $src_host --port=$src_port -u $src_username $([ -n $src_password ] && echo "--password=$src_password" || echo "-p" ) --batch --skip-column-names --raw '$dbname' --execute='$@' 2>&1 | grep -v 'Using a password on the command line interface can be insecure'"
+        local query="mysql --defaults-extra-file=$extrafile --batch --skip-column-names --raw '$dbname' --execute='$@' 2>&1"
         [ $ssh = 1 ] && ssh_run "$query" || eval $query
 }
  
@@ -131,32 +150,32 @@ izsyncmysql() {
  
   for src_db in $src_dblist ; do
    [ $n -ne 1 ] && echo
-   dbsize="$(mysql_query_src $src_db "SELECT table_schema \"Database Name\", ROUND(SUM(data_length + index_length) / 1024 / 1024, 2) \"Database Size (MB)\" FROM information_schema.TABLES where table_schema = \"$src_db\";" | awk '{print $2}')"
-   echo "$(log) [$n/$src_db_tot] START processing DB: $src_db Size: $dbsize (MB)"
-   echo "$(log) => importing from source DB: ($src_uri)$([ $ssh = 1 ] && echo " (via $ssh_src_uri)") to destination DB: ($dst_uri)"
+   # if dst_db is not defined use the src_db name
+   [ -z "$dst_db" ] && dst_db=$src_db
+   local dbsize="$(mysql_query_src $src_db "SELECT table_schema \"Database Name\", ROUND(SUM(data_length + index_length) / 1024 / 1024, 2) \"Database Size (MB)\" FROM information_schema.TABLES where table_schema = \"$src_db\";" | awk '{print $2}')"
+   echo "$(log) [$n/$src_db_tot] START processing DB:[$src_db] size:[$dbsize MB]"
+   echo "$(log) => importing from source DB:[${src_uri}${src_db}]$([ $ssh = 1 ] && echo " (via $ssh_src_uri)") to destination DB:[${dst_uri}${dst_db}]"
    [ $export_views = 0 ] && mysql_viewlist="$(mysql_query_src $src_db "SHOW FULL TABLES IN $src_db WHERE TABLE_TYPE LIKE \"VIEW\";" | awk '{print $1}' | tr -s "\n" " ")"
  
    #set -x
  
    # drop and recreate empty destination db if specified
-   if [ "$dst_db_drop" = "1" ]; then
-     [ ! -z $dst_port ] && mysqladmin_opts+="--port=$dst_port"
-     # if destination db exist, drop it before creating
-     if [ ! -z "$(mysql_query_dst mysql "SHOW DATABASES LIKE \"$dst_db\";")" ]; then
-       echo "$(log) => dropping destination DB: ($dst_uri)"
-       mysqladmin -h "$dst_host" -u "$dst_username" --password="$dst_password" $mysqladmin_opts drop "$dst_db" -f 2>&1 | grep -v "Warning: Using a password" | grep -v '^Database.* dropped$'
+   # if destination db exist, drop it before creating
+   if [ -z "$(mysql_query_dst mysql "SHOW DATABASES LIKE \"$dst_db\";")" ]; then
+     echo "$(log) => creating empty DB:[$dst_uri]"
+     mysqladmin --defaults-extra-file=$izsyncmysql_dst_cfg create "$dst_db"
+    else
+     if [ "$dst_db_drop" = "1" ]; then
+       echo "$(log) => dropping destination DB:[$dst_uri]"
+       mysqladmin --defaults-extra-file=$izsyncmysql_dst_cfg drop "$dst_db" -f 2>&1 | grep -v '^Database.* dropped$'
+       mysqladmin --defaults-extra-file=$izsyncmysql_dst_cfg create "$dst_db"
      fi
-     echo "$(log) => creating empty DB: ($dst_uri)"
-     mysqladmin -h "$dst_host" -u "$dst_username" --password="$dst_password" $mysqladmin_opts create "$dst_db" 2>&1 | grep -v "Warning: Using a password"
    fi
 
- 
    # export / import db single pass
-   local query_dump="mysqldump $mysqldump_opts -h $src_host --port=$src_port -u $src_username $([ -n "$src_password" ] && echo "--password=$src_password" || echo "-p" ) $src_db $([ $export_views = 0 ] && for view in $mysql_viewlist; do echo -n '--ignore-table=$src_db.$view '; done)"
-# 2>&1 \
-#          | grep -v 'Using a password on the command line interface can be insecure'"
- 
-   local query_import="mysql -h $dst_host -u $dst_username --password=$dst_password --port=$dst_port -f $dst_db"
+   [ $export_views = 0 ] && local mysqldump_opts+=" $(for view in $mysql_viewlist; do echo -n ' --ignore-table=$src_db.$view'; done)"
+   local query_dump="mysqldump --defaults-extra-file=$izsyncmysql_src_cfg $mysqldump_opts $src_db"
+   local query_import="mysql --defaults-extra-file=$izsyncmysql_dst_cfg -f $dst_db"
  
    [ $ssh = 1 ] && sync_cmd+="ssh_run "
    sync_cmd+="$query_dump "
@@ -167,8 +186,10 @@ izsyncmysql() {
 
    eval $sync_cmd
  
-   echo "$(log) [$n/$src_db_tot] END processing DB: $src_db"
+   echo "$(log) [$n/$src_db_tot] END processing DB:[$src_db]"
    let n+=1
+   # unset variables
+   unset src_db dst_db mysqldump_opts mysql_viewlist dbsize query_dump query_import sync_cmd
   done
   echo "$(log) ----------------------------------------------"
 }
@@ -178,3 +199,6 @@ log() {
 }
  
 izsyncmysql
+
+# if we no error occur, then cleanup all temporary files and directories
+trap "rm -f "${izsyncmysql_src_cfg}" "${izsyncmysql_dst_cfg}" && exit 0 || exit 1" 0
