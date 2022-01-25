@@ -74,12 +74,12 @@ mysqldump_opts="-C --force --opt --quote-names --default-character-set=utf8 --ev
 #mysqldump_opts+=" --hex-blob --skip-triggers --set-gtid-purged=OFF --default-character-set=utf8"
  
 # add drop database if no src_db or dst_db is given
-if [[ -z "$dst_db" ]]; then
-    dst_db_drop=0
-    mysqldump_opts+=" -B --add-drop-database"
-  else
-    dst_db_drop=1
-fi
+#if [[ -z "$dst_db" ]]; then
+#    dst_db_drop=0
+#    mysqldump_opts+=" -B --add-drop-database"
+#  else
+#    dst_db_drop=1
+#fi
  
 # show all database size
 # SELECT table_schema AS "Database name", SUM(data_length + index_length) / 1024 / 1024 AS "Size (MB)" FROM information_schema.TABLES GROUP BY table_schema;
@@ -154,29 +154,27 @@ izsyncmysql() {
    [ -z "$dst_db" ] && dst_db=$src_db
    local dbsize="$(mysql_query_src $src_db "SELECT table_schema \"Database Name\", ROUND(SUM(data_length + index_length) / 1024 / 1024, 2) \"Database Size (MB)\" FROM information_schema.TABLES where table_schema = \"$src_db\";" | awk '{print $2}')"
    echo "$(log) [$n/$src_db_tot] START processing DB:[$src_db] size:[$dbsize MB]"
-   echo "$(log) => importing from source DB:[${src_uri}${src_db}]$([ $ssh = 1 ] && echo " (via $ssh_src_uri)") to destination DB:[${dst_uri}${dst_db}]"
-   [ $export_views = 0 ] && mysql_viewlist="$(mysql_query_src $src_db "SHOW FULL TABLES IN $src_db WHERE TABLE_TYPE LIKE \"VIEW\";" | awk '{print $1}' | tr -s "\n" " ")"
- 
+
    #set -x
  
    # drop and recreate empty destination db if specified
    # if destination db exist, drop it before creating
-   if [ -z "$(mysql_query_dst mysql "SHOW DATABASES LIKE \"$dst_db\";")" ]; then
-     echo "$(log) => creating empty DB:[$dst_uri]"
-     mysqladmin --defaults-extra-file=$izsyncmysql_dst_cfg create "$dst_db"
-    else
-     if [ "$dst_db_drop" = "1" ]; then
-       echo "$(log) => dropping destination DB:[$dst_uri]"
-       mysqladmin --defaults-extra-file=$izsyncmysql_dst_cfg drop "$dst_db" -f 2>&1 | grep -v '^Database.* dropped$'
-       mysqladmin --defaults-extra-file=$izsyncmysql_dst_cfg create "$dst_db"
-     fi
+   if [ ! -z "$(mysql_query_dst mysql "SHOW DATABASES LIKE \"$dst_db\";")" ]; then
+     echo "$(log) => dropping destination DB:[${dst_uri}${dst_db}]"
+     mysqladmin --defaults-extra-file=$izsyncmysql_dst_cfg drop "$dst_db" -f 2>&1 | grep -v '^Database.* dropped$'
    fi
+   echo "$(log) => creating empty DB:[${dst_uri}${dst_db}]"
+   mysqladmin --defaults-extra-file=$izsyncmysql_dst_cfg create "$dst_db"
 
-   # export / import db single pass
-   [ $export_views = 0 ] && local mysqldump_opts+=" $(for view in $mysql_viewlist; do echo -n ' --ignore-table=$src_db.$view'; done)"
-   local query_dump="mysqldump --defaults-extra-file=$izsyncmysql_src_cfg $mysqldump_opts $src_db"
+   echo "$(log) => importing from source DB:[${src_uri}${src_db}]$([ $ssh = 1 ] && echo " (via $ssh_src_uri)") to destination DB:[${dst_uri}${dst_db}]"
+   [ $export_views = 0 ] && mysql_viewlist="$(mysql_query_src $src_db "SHOW FULL TABLES IN $src_db WHERE TABLE_TYPE LIKE \"VIEW\";" | awk '{print $1}' | tr -s "\n" " ")"
+ 
+   # export / import db single step
+   [ $export_views = 0 ] && local mysqldump_opts_extra=" $(for view in $mysql_viewlist; do echo -n ' --ignore-table=$src_db.$view'; done)"
+   local query_dump="mysqldump --defaults-extra-file=$izsyncmysql_src_cfg $mysqldump_opts $mysqldump_opts_extra $src_db"
    local query_import="mysql --defaults-extra-file=$izsyncmysql_dst_cfg -f $dst_db"
  
+   unset sync_cmd
    [ $ssh = 1 ] && sync_cmd+="ssh_run "
    sync_cmd+="$query_dump "
    sync_cmd+="| sed -E -e 's/DEFINER=\`([^\`]+?)\`@\`([^\`]+?)\`/DEFINER=CURRENT_USER/g' -e 's/,NO_AUTO_CREATE_USER//g' "
@@ -189,7 +187,9 @@ izsyncmysql() {
    echo "$(log) [$n/$src_db_tot] END processing DB:[$src_db]"
    let n+=1
    # unset variables
-   unset src_db dst_db mysqldump_opts mysql_viewlist dbsize query_dump query_import sync_cmd
+   unset src_db dst_db sync_cmd mysqldump_opts_extra
+   # wait 1 sec before proceding
+   sleep 1
   done
   echo "$(log) ----------------------------------------------"
 }
