@@ -296,13 +296,13 @@ Misc options:
 
 Examples:
   Single DB replication changing the name:
-  $ $0 -s mysql://root:PASSWORD@remotedb:3306/reacto_initzero -d mysql://root:PASSWORD@localhost:3306/reacto_test
+  $ $0 -s mysql://root:PASSWORD@SOURCE_DB:3306/reacto_initzero -d mysql://root:PASSWORD@DESTINATION_DB:3306/reacto_test
 
   All DB replication:
   $ $0 -s mysql://root:PASSWORD@SOURCE_DB:3306 -d mysql://root:PASSWORD@DESTINATION_DB:3306
 
-  All DB replication with DB excluded:
-  $ $0 -s mysql://root:PASSWORD@SOURCE_DB:3306 -d mysql://root:PASSWORD@DESTINATION_DB:3306 -e test,db1,otherdb
+  All DB replication with some DB excluded:
+  $ $0 -s mysql://root:PASSWORD@SOURCE_DB:3306 -d mysql://root:PASSWORD@DESTINATION_DB:3306 -e information_schema,performance_schema,sys,mysql,test,reacto_test
   
   Single DB replication via SOURCE SSH tunnel:
   $ $0 -S ssh://root:PASSWORD@REMOTE_SOURCE_SERVER:22 -s mysql://root:PASSWORD@SOURCE_DB:3306/reacto_initzero -d mysql://root:PASSWORD@DESTINATION_DB:3306/reacto_test
