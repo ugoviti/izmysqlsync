@@ -292,7 +292,7 @@ Option:  Argument:  Description:
   -D     <uri>      The URI of the DESTINATION SSH server used as reverse tunnel for mysql import
 
 Misc options:
-  -h                         Display this help menu
+  -h                Display this help menu
 
 Examples:
   Single DB replication changing the name:
@@ -446,6 +446,3 @@ elif [[ $ssh_src_tunnel = 1 && $ssh_dst_tunnel = 1 ]]; then
 elif [[ $ssh_src_tunnel = 0 && $ssh_dst_tunnel = 0 ]]; then
     trap "rm -f ${izsyncmysql_src_cfg} ${izsyncmysql_dst_cfg} && exit 0 || exit 1" 0
 fi
-
-
-
