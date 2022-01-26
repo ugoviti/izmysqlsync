@@ -238,7 +238,7 @@ Option:  Argument:  Description:
   -s     <uri>      The URI of the SOURCE MySQL server
   -d     <uri>      The URI of the DESTINATION MySQL server
   -e     <db>       Comma separated list of DB to exclude when syncronizing all DB
-  -t     <uri>      The URI of the remote SSH server used for reverse tunnel
+  -S     <uri>      The URI of the SOURCE SSH server used as reverse tunnel for mysqldump
 
 Misc options:
   -h                         Display this help menu
@@ -250,6 +250,9 @@ Examples:
   All DB replication:
   $ $0 -s mysql://root:PASSWORD@remotedb:3306 -d mysql://root:PASSWORD@localhost:3306
 
+  All DB replication with DB excluded:
+  $ $0 -s mysql://root:PASSWORD@remotedb:3306 -d mysql://root:PASSWORD@localhost:3306 -e test,db1,otherdb
+  
   Single DB replication via SSH tunnel:
   $ $0 -r ssh://root:PASSWORD@externalip:2222 -s mysql://root:PASSWORD@remotedb:3306/reacto_initzero -d mysql://root:PASSWORD@localhost:3306/reacto_test
 "
@@ -267,7 +270,7 @@ fi
 # Usage: scriptname -options
 # Note: dash (-) necessary
 
-while getopts "s:d:t:e:h" option ; do
+while getopts "s:d:S:e:h" option ; do
   case $option in
     s) # source mysql server uri
         src_uri="${OPTARG}"
@@ -275,7 +278,7 @@ while getopts "s:d:t:e:h" option ; do
     d) # destination mysql server uri
         dst_uri="${OPTARG}"
         ;;
-    t) # source ssh server used as reverse tunnel interface
+    S) # source ssh server used as reverse tunnel interface
         ssh_src_uri="${OPTARG}"
         ;;
     e) # exclude these db
