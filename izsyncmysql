@@ -1,73 +1,18 @@
 #!/bin/bash
-# izsyncmysql: mysql database direct replicate/export/import script
+# izsyncmysql
 # written by Ugo Viti <ugo.viti@initzero.it>
-# version: 20220125
+NAME="izSyncMYSQL"
+DESCRIPTION="MySQL database live replication/export/import script"
+VERSION="2.0.0"
+VERSION_DATE="20220125"
 
-## Examples:
-
-#**copy local database into other database:**
-#  src_host='localhost' src_port=3306 src_username='root' src_password='PASSWORD' dst_host='localhost' dst_port=3306 dst_username='root' dst_password='PASSWORD' izsyncmysql DATABASE_SORGENTE DATABASE_DESTINAZIONE
-
-#**mysql replica via tcp 3306 singolo DB (mantain source DB name):**
-#  src_host='wms-database.prod.svc.cluster.local' src_port=3306 src_username='root' src_password='PASSWORD' dst_host='wms-database.test.svc.cluster.local' dst_port=3306 dst_username='root' dst_password='PASSWORD' izsyncmysql DATABASE_SORGENTE
-
-#**mysql replica via tcp 3306 single DB (renaming the destination DB):**
-#  src_host='wms-database.test.svc.cluster.local' src_username='root' src_password='PASSWORD' dst_host='wms-database.test.svc.cluster.local' dst_username='root' dst_password='PASSWORD' izsyncmysql DATABASE_SORGENTE DATABASE_DESTINAZIONE
-
-#**mysql replica Tunnel SSH single DB (mantain source DB name):**
-#  ssh=1 ssh_src_host="www.cloudwms.it" ssh_src_port="32" src_host='127.0.0.1' src_username='root' src_password='PASSWORD' dst_host='127.0.0.1' dst_username='root' dst_password='PASSWORD' izsyncmysql DATABASE_SORGENTE
-
-#**mysql replica via Tunnel SSH of all DB and some excluded:**
-#  ssh=1 ssh_src_username=initzero ssh_src_host="www.cloudwms.it" ssh_src_port="32" src_host='127.0.0.1' src_username='root' src_password='PASSWORD' src_db_exclude='-e information_schema -e performance_schema -e sys -e mysql' dst_host='127.0.0.1' dst_username='root' dst_password='PASSWORD' izsyncmysql
-
-
-src_db="$1"
-shift
-dst_db="$1"
- 
+# default vars
 export_views=1
  
 izsyncmysql_src_cfg="$HOME/izsyncmysql_src.cfg"
 izsyncmysql_dst_cfg="$HOME/izsyncmysql_dst.cfg"
 
 #set -x
- 
-: ${ssh:=0}
- 
-: ${ssh_src_host:=""}
-: ${ssh_src_port:="22"}
-: ${ssh_src_username:="root"}
- 
-: ${src_host:=""}
-: ${src_username:="root"}
-: ${src_password:=""}
-: ${src_port:="3306"}
- 
-: ${src_db_exclude:="-e information_schema -e performance_schema -e sys -e mysql"}
- 
-: ${dst_host:=""}
-: ${dst_username:="root"}
-: ${dst_password:=""}
-: ${dst_port:="3306"}
- 
-[[ -z "$ssh_src_host" ]] && ssh=0
-[[ -z "$src_host" || -z "$src_username" ]] && echo "ERROR: no source host or username specified. exiting..." && exit 1
-[[ -z "$dst_host" || -z "$dst_username" ]] && echo "ERROR: no destination host or username specified. exiting..." && exit 1
- 
-# save mysql src logins
-echo "[client]
-host=$src_host
-port=$src_port
-user=$src_username
-$([ ! -z $src_password ] && echo password=$src_password)
-" > "$izsyncmysql_src_cfg"
-
-echo "[client]
-host=$dst_host
-port=$dst_port
-user=$dst_username
-$([ ! -z $dst_password ] && echo password=$dst_password)
-" > "$izsyncmysql_dst_cfg"
 
 # default mysqldump options
 mysqldump_opts="-C --force --opt --quote-names --default-character-set=utf8 --events --routines --triggers --hex-blob --single-transaction --quick --lock-tables=false --column-statistics=0"
@@ -115,10 +60,25 @@ mysql_query() {
         local dbname=$1
         shift
         local query="mysql --defaults-extra-file=$extrafile --batch --skip-column-names --raw '$dbname' --execute='$@' 2>&1"
-        [ $ssh = 1 ] && ssh_run "$query" || eval $query
+        [ $use_ssh = 1 ] && ssh_run "$query" || eval $query
 }
  
-izsyncmysql() {
+main() {
+  # save mysql src logins
+  echo "[client]
+  host=$src_host
+  port=$src_port
+  user=$src_username
+  $([ ! -z $src_password ] && echo password=$src_password)
+  " > "$izsyncmysql_src_cfg"
+
+  echo "[client]
+  host=$dst_host
+  port=$dst_port
+  user=$dst_username
+  $([ ! -z $dst_password ] && echo password=$dst_password)
+  " > "$izsyncmysql_dst_cfg"
+
   if [ -z "$src_db" ]; then
     src_dblist="$(mysql_query_src mysql "SHOW DATABASES;" | grep -wv ${src_db_exclude} | tr -s "\n" " ")"
     [ $? != 0 ] && echo "ssh unable to connect" && exit 1
@@ -136,12 +96,13 @@ izsyncmysql() {
   dst_uri="mysql://$dst_username@$dst_host:$dst_port/$dst_db"
  
   echo "$(log) ----------------------------------------------"
-  [ $ssh = 1 ] && echo "               Tunnel SSH: ssh://$ssh_src_username@$ssh_src_host:$ssh_src_port"
+  [ $use_ssh = 1 ] && echo "               Tunnel SSH: ssh://$ssh_src_username@$ssh_src_host:$ssh_src_port"
   echo "               Source URI: $src_uri"
   echo "          Destination URI: $dst_uri"
   echo
   echo "          Database totali: $src_db_tot"
   echo "Database da sincronizzare: $src_dblist"
+  echo "         Database exclusi: $src_db_exclude"
   echo
   [ $src_uri = $dst_uri ] && echo -e "ERROR: you are cloning a DB into itself... exiting now to avoid data loss" && exit 1
   echo -e -n "Premere invio per continuare (CTRL-C per cancellare)"; read -n 1
@@ -166,7 +127,7 @@ izsyncmysql() {
    echo "$(log) => creating empty DB:[${dst_uri}${dst_db}]"
    mysqladmin --defaults-extra-file=$izsyncmysql_dst_cfg create "$dst_db"
 
-   echo "$(log) => importing from source DB:[${src_uri}${src_db}]$([ $ssh = 1 ] && echo " (via $ssh_src_uri)") to destination DB:[${dst_uri}${dst_db}]"
+   echo "$(log) => importing from source DB:[${src_uri}${src_db}]$([ $use_ssh = 1 ] && echo " (via $ssh_src_uri)") to destination DB:[${dst_uri}${dst_db}]"
    [ $export_views = 0 ] && mysql_viewlist="$(mysql_query_src $src_db "SHOW FULL TABLES IN $src_db WHERE TABLE_TYPE LIKE \"VIEW\";" | awk '{print $1}' | tr -s "\n" " ")"
  
    # export / import db single step
@@ -175,7 +136,7 @@ izsyncmysql() {
    local query_import="mysql --defaults-extra-file=$izsyncmysql_dst_cfg -f $dst_db"
  
    unset sync_cmd
-   [ $ssh = 1 ] && sync_cmd+="ssh_run "
+   [ $use_ssh = 1 ] && sync_cmd+="ssh_run "
    sync_cmd+="$query_dump "
    sync_cmd+="| sed -E -e 's/DEFINER=\`([^\`]+?)\`@\`([^\`]+?)\`/DEFINER=CURRENT_USER/g' -e 's/,NO_AUTO_CREATE_USER//g' "
    sync_cmd+="| $query_import "
@@ -197,8 +158,205 @@ izsyncmysql() {
 log() {
         echo "$(date +"[%Y/%m/%d %H:%M:%S]")$1 "
 }
- 
-izsyncmysql
 
+#
+# URI parsing function
+#
+# The function creates global variables with the parsed results.
+# It returns 0 if parsing was successful or non-zero otherwise.
+#
+# [schema://][user[:password]@]host[:port][/path][?[arg1=val1]...][#fragment]
+#
+# thanks to: https://wp.vpalos.com/537/uri-parsing-using-bash-built-in-features/
+function uri_parser() {
+    # uri capture
+    uri="$@"
+
+    # safe escaping
+    uri="${uri//\`/%60}"
+    uri="${uri//\"/%22}"
+
+    # top level parsing
+    pattern='^(([a-z]{3,5}):\/\/)?((([^:\/]+)(:([^@\/]*))?@)?([^:\/?]+)(:([0-9]+))?)(\/[^?]*)?(\?[^#]*)?(#.*)?$'
+    [[ "$uri" =~ $pattern ]] || return 1;
+
+    # component extraction
+    uri=${BASH_REMATCH[0]}
+    uri_schema=${BASH_REMATCH[2]}
+    uri_address=${BASH_REMATCH[3]}
+    uri_username=${BASH_REMATCH[5]}
+    uri_password=${BASH_REMATCH[7]}
+    uri_host=${BASH_REMATCH[8]}
+    uri_port=${BASH_REMATCH[10]}
+    uri_path=${BASH_REMATCH[11]}
+    uri_query=${BASH_REMATCH[12]}
+    uri_fragment=${BASH_REMATCH[13]}
+
+    # path parsing
+    count=0
+    path="$uri_path"
+    pattern='^/+([^/]+)'
+    while [[ $path =~ $pattern ]]; do
+        eval "uri_parts[$count]=\"${BASH_REMATCH[1]}\""
+        path="${path:${#BASH_REMATCH[0]}}"
+        let count++
+    done
+
+    # query parsing
+    count=0
+    query="$uri_query"
+    pattern='^[?&]+([^= ]+)(=([^&]*))?'
+    while [[ $query =~ $pattern ]]; do
+        eval "uri_args[$count]=\"${BASH_REMATCH[1]}\""
+        eval "uri_arg_${BASH_REMATCH[1]}=\"${BASH_REMATCH[3]}\""
+        query="${query:${#BASH_REMATCH[0]}}"
+        let count++
+    done
+
+    # return success
+    return 0
+}
+
+function uri_unset() {
+  unset uri uri_schema uri_address uri_username uri_password uri_host uri_port uri_path uri_query uri_fragment count query pattern
+}
+
+###################################################################
+#################### default program menu and arguments validations
+
+# command prompt menu
+usage(){
+  local progname=$0
+  echo "$NAME - $DESCRIPTION
+written by Ugo Viti <ugo.viti@initzero.it>
+version: $VERSION released: $VERSION_DATE
+
+usage: $progname [options]
+
+Option:  Argument:  Description:
+--------------------------------------------------------------------------------
+  -s     <uri>      The URI of the SOURCE MySQL server
+  -d     <uri>      The URI of the DESTINATION MySQL server
+  -e     <db>       Comma separated list of DB to exclude when syncronizing all DB
+  -t     <uri>      The URI of the remote SSH server used for reverse tunnel
+
+Misc options:
+  -h                         Display this help menu
+
+Examples:
+  Single DB replication changing the name:
+  $ $0 -s mysql://root:PASSWORD@remotedb:3306/reacto_initzero -d mysql://root:PASSWORD@localhost:3306/reacto_test
+
+  All DB replication:
+  $ $0 -s mysql://root:PASSWORD@remotedb:3306 -d mysql://root:PASSWORD@localhost:3306
+
+  Single DB replication via SSH tunnel:
+  $ $0 -r ssh://root:PASSWORD@externalip:2222 -s mysql://root:PASSWORD@remotedb:3306/reacto_initzero -d mysql://root:PASSWORD@localhost:3306/reacto_test
+"
+}
+
+NO_ARGS=0
+E_OPTERROR=65
+
+if [ $# -eq "$NO_ARGS" ]  # Script invoked with no command-line args?
+ then
+  usage
+  exit $E_OPTERROR        # Exit and explain usage, if no argument(s) given.
+fi
+
+# Usage: scriptname -options
+# Note: dash (-) necessary
+
+while getopts "s:d:t:e:h" option ; do
+  case $option in
+    s) # source mysql server uri
+        src_uri="${OPTARG}"
+        ;;
+    d) # destination mysql server uri
+        dst_uri="${OPTARG}"
+        ;;
+    t) # source ssh server used as reverse tunnel interface
+        ssh_src_uri="${OPTARG}"
+        ;;
+    e) # exclude these db
+        src_db_exclude="${OPTARG}"
+        ;;
+    h) # display this help menu
+        usage
+        exit 0
+        ;;
+    *)
+        usage
+        echo "invalid switch specified - abort." >&2
+        exit 1
+        ;;
+  esac
+done
+# Move argument pointer to next.
+shift $(($OPTIND - 1))
+
+[ -z "$src_uri" ] && echo "ERROR: no source URI Server specified. exiting..." && exit 1
+[ -z "$dst_uri" ] && echo "ERROR: no destination URI Server specified. exiting..." && exit 1
+
+# import src uri parts
+uri_parser $src_uri
+src_host="$uri_host"
+src_port="$uri_port"
+src_username="$uri_username"
+src_password="$uri_password"
+src_db="$(echo "$uri_path" | sed 's|^/||')"
+
+# src default vars
+: ${src_host:=""}
+: ${src_username:="root"}
+: ${src_password:=""}
+: ${src_port:="3306"}
+ 
+if [ ! -z "$src_db_exclude" ]; then
+  unset mysql_exclude_list
+  for db in $(echo "$src_db_exclude" | sed 's/,/ /g') ; do
+    mysql_exclude_list+=" -e $db"
+  done
+  src_db_exclude="$mysql_exclude_list"
+fi
+: ${src_db_exclude:="-e information_schema -e performance_schema -e sys -e mysql"}
+uri_unset
+
+uri_parser $dst_uri
+dst_host="$uri_host"
+dst_port="$uri_port"
+dst_username="$uri_username"
+dst_password="$uri_password"
+dst_db="$(echo "$uri_path" | sed 's|^/||')"
+
+# dst default vars
+: ${dst_uri:=""}
+: ${dst_host:=""}
+: ${dst_username:="root"}
+: ${dst_password:=""}
+: ${dst_port:="3306"}
+uri_unset
+
+
+uri_parser $ssh_src_uri
+ssh_src_host="$uri_host"
+ssh_src_port="$uri_port"
+ssh_src_username="$uri_username"
+ssh_src_password="$uri_password"
+# ssh tunnel vars
+: ${ssh_src_host:=""}
+: ${ssh_src_port:="22"}
+: ${ssh_src_username:="root"}
+[[ -z "$ssh_src_host" ]] && use_ssh=0 || use_ssh=1
+uri_unset
+
+ 
+# sanity checks
+[[ -z "$src_host" || -z "$src_username" ]] && echo "ERROR: no source host or username specified. exiting..." && exit 1
+[[ -z "$dst_host" || -z "$dst_username" ]] && echo "ERROR: no destination host or username specified. exiting..." && exit 1
+ 
+# here begin the running of izsynth
+main
+ 
 # if we no error occur, then cleanup all temporary files and directories
 trap "rm -f "${izsyncmysql_src_cfg}" "${izsyncmysql_dst_cfg}" && exit 0 || exit 1" 0
