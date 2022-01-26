@@ -9,13 +9,17 @@ VERSION_DATE="20220125"
 # default vars
 export_views=1
  
-izsyncmysql_src_cfg="$HOME/izsyncmysql_src.cfg"
-izsyncmysql_dst_cfg="$HOME/izsyncmysql_dst.cfg"
+izsyncmysql_src_cfg="/tmp/izsyncmysql_src-$RANDOM.cfg"
+izsyncmysql_dst_cfg="/tmp/izsyncmysql_dst-$RANDOM.cfg"
 
 #set -x
 
 # default mysqldump options
-mysqldump_opts="-C --force --opt --quote-names --default-character-set=utf8 --events --routines --triggers --hex-blob --single-transaction --quick --lock-tables=false --column-statistics=0"
+mysqldump_opts="-C --force --opt --quote-names --default-character-set=utf8 --events --routines --triggers --hex-blob --single-transaction --quick --lock-tables=false"
+
+# if running mariadb doesn't use the following options
+[ -z "$(mysqldump --version | grep -i mariadb)" ] && mysqldump_opts+=" --column-statistics=0"
+
 #mysqldump_opts+=" --hex-blob --skip-triggers --set-gtid-purged=OFF --default-character-set=utf8"
  
 # add drop database if no src_db or dst_db is given
@@ -30,7 +34,7 @@ mysqldump_opts="-C --force --opt --quote-names --default-character-set=utf8 --ev
 # SELECT table_schema AS "Database name", SUM(data_length + index_length) / 1024 / 1024 AS "Size (MB)" FROM information_schema.TABLES GROUP BY table_schema;
  
 ssh_run() {
-        #ssh -o BatchMode=yes -o StrictHostKeyChecking=no -C -n $ssh_src_username@$ssh_src_host -p $ssh_src_port "$@"
+        set -x
         ssh -o StrictHostKeyChecking=no -C -n $ssh_src_username@$ssh_src_host -p $ssh_src_port "$@"
 }
  
@@ -102,7 +106,7 @@ main() {
   echo
   echo "          Database totali: $src_db_tot"
   echo "Database da sincronizzare: $src_dblist"
-  echo "         Database exclusi: $src_db_exclude"
+  [ -z "$src_db" ] && echo "         Database esclusi: $(echo $src_db_exclude_list | sed 's/,/ /g')"
   echo
   [ $src_uri = $dst_uri ] && echo -e "ERROR: you are cloning a DB into itself... exiting now to avoid data loss" && exit 1
   echo -e -n "Premere invio per continuare (CTRL-C per cancellare)"; read -n 1
@@ -121,13 +125,13 @@ main() {
    # drop and recreate empty destination db if specified
    # if destination db exist, drop it before creating
    if [ ! -z "$(mysql_query_dst mysql "SHOW DATABASES LIKE \"$dst_db\";")" ]; then
-     echo "$(log) => dropping destination DB:[${dst_uri}${dst_db}]"
+     echo "$(log) => dropping destination DB:[${dst_uri}]"
      mysqladmin --defaults-extra-file=$izsyncmysql_dst_cfg drop "$dst_db" -f 2>&1 | grep -v '^Database.* dropped$'
    fi
-   echo "$(log) => creating empty DB:[${dst_uri}${dst_db}]"
+   echo "$(log) => creating empty DB:[${dst_uri}]"
    mysqladmin --defaults-extra-file=$izsyncmysql_dst_cfg create "$dst_db"
 
-   echo "$(log) => importing from source DB:[${src_uri}${src_db}]$([ $use_ssh = 1 ] && echo " (via $ssh_src_uri)") to destination DB:[${dst_uri}${dst_db}]"
+   echo "$(log) => importing from source DB:[${src_uri}]$([ $use_ssh = 1 ] && echo " (via $ssh_src_uri)") to destination DB:[${dst_uri}]"
    [ $export_views = 0 ] && mysql_viewlist="$(mysql_query_src $src_db "SHOW FULL TABLES IN $src_db WHERE TABLE_TYPE LIKE \"VIEW\";" | awk '{print $1}' | tr -s "\n" " ")"
  
    # export / import db single step
@@ -248,13 +252,13 @@ Examples:
   $ $0 -s mysql://root:PASSWORD@remotedb:3306/reacto_initzero -d mysql://root:PASSWORD@localhost:3306/reacto_test
 
   All DB replication:
-  $ $0 -s mysql://root:PASSWORD@remotedb:3306 -d mysql://root:PASSWORD@localhost:3306
+  $ $0 -s mysql://root:PASSWORD@SOURCE_DB:3306 -d mysql://root:PASSWORD@DESTINATION_DB:3306
 
   All DB replication with DB excluded:
-  $ $0 -s mysql://root:PASSWORD@remotedb:3306 -d mysql://root:PASSWORD@localhost:3306 -e test,db1,otherdb
+  $ $0 -s mysql://root:PASSWORD@SOURCE_DB:3306 -d mysql://root:PASSWORD@DESTINATION_DB:3306 -e test,db1,otherdb
   
   Single DB replication via SSH tunnel:
-  $ $0 -r ssh://root:PASSWORD@externalip:2222 -s mysql://root:PASSWORD@remotedb:3306/reacto_initzero -d mysql://root:PASSWORD@localhost:3306/reacto_test
+  $ $0 -S ssh://root:PASSWORD@REMOTE_SERVER:22 -s mysql://root:PASSWORD@SOURCE_DB:3306/reacto_initzero -d mysql://root:PASSWORD@DESTINATION_DB:3306/reacto_test
 "
 }
 
@@ -282,7 +286,7 @@ while getopts "s:d:S:e:h" option ; do
         ssh_src_uri="${OPTARG}"
         ;;
     e) # exclude these db
-        src_db_exclude="${OPTARG}"
+        src_db_exclude_list="${OPTARG}"
         ;;
     h) # display this help menu
         usage
@@ -315,14 +319,13 @@ src_db="$(echo "$uri_path" | sed 's|^/||')"
 : ${src_password:=""}
 : ${src_port:="3306"}
  
+: ${src_db_exclude_list:="information_schema,performance_schema,sys,mysql"}
 if [ ! -z "$src_db_exclude" ]; then
-  unset mysql_exclude_list
-  for db in $(echo "$src_db_exclude" | sed 's/,/ /g') ; do
-    mysql_exclude_list+=" -e $db"
+  unset src_db_exclude
+  for db in $(echo "$src_db_exclude_list" | sed 's/,/ /g') ; do
+    src_db_exclude+=" -e $db"
   done
-  src_db_exclude="$mysql_exclude_list"
 fi
-: ${src_db_exclude:="-e information_schema -e performance_schema -e sys -e mysql"}
 uri_unset
 
 uri_parser $dst_uri
