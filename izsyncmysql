@@ -3,8 +3,8 @@
 # written by Ugo Viti <ugo.viti@initzero.it>
 NAME="izSyncMYSQL"
 DESCRIPTION="MySQL database live replication/export/import script"
-VERSION="2.0.0"
-VERSION_DATE="20220125"
+VERSION="2.0.1"
+VERSION_DATE="20220127"
 
 # default vars
 export_views=1
@@ -27,7 +27,16 @@ mysqldump_opts="-C --force --opt --quote-names --default-character-set=utf8 --ev
 [ -z "$(mysqldump --version | grep -i mariadb)" ] && mysqldump_opts+=" --column-statistics=0"
 
 #mysqldump_opts+=" --hex-blob --skip-triggers --set-gtid-purged=OFF --default-character-set=utf8"
- 
+
+# default mandatory commands
+COMMANDS="ssh sshpass mysqldump mysql"
+
+# verify if all commands are installed in the system paths
+for COMMAND in $COMMANDS; do
+  which $COMMAND >/dev/null 2>&1
+  [ $? -ne 0 ] && echo "ERROR: the command '$COMMAND' doesn't exist in any path, please install it and retry" && exit 1
+done
+
 # add drop database if no src_db or dst_db is given
 #if [[ -z "$dst_db" ]]; then
 #    dst_db_drop=0
@@ -42,7 +51,8 @@ mysqldump_opts="-C --force --opt --quote-names --default-character-set=utf8 --ev
 # manage source ssh server commands
 ssh_src_run() {
         #set -x
-        ssh -o StrictHostKeyChecking=no -C -n $ssh_src_username@$ssh_src_host -p $ssh_src_port "$@"
+        [ "$ssh_src_password" ] && cmd=" sshpass -p${ssh_src_password}"
+        $cmd ssh -o StrictHostKeyChecking=no -C -n $ssh_src_username@$ssh_src_host -p $ssh_src_port "$@"
 }
 
 
@@ -60,7 +70,8 @@ ssh_src_cfg_rm() {
 # manage destination ssh server commands
 ssh_dst_run() {
         #set -x
-        ssh -o StrictHostKeyChecking=no -C -n $ssh_dst_username@$ssh_dst_host -p $ssh_dst_port "$@"
+        [ "$ssh_dst_password" ] && cmd=" sshpass -p${ssh_dst_password}"
+        $cmd ssh -o StrictHostKeyChecking=no -C -n $ssh_dst_username@$ssh_dst_host -p $ssh_dst_port "$@"
 }
 
 
@@ -79,14 +90,14 @@ mysql_query_src() {
         local dbname=$1
         shift
         local query="mysql --defaults-extra-file=$izsyncmysql_src_cfg --batch --skip-column-names --raw '$dbname' --execute='$@' 2>&1"
-        [ $ssh_src_tunnel = 1 ] && ssh_src_run "$query" || eval $query
+        [ $ssh_src_tunnel = 1 ] && ssh_src_cfg_make && ssh_src_run "$query" || eval $query
 }
  
 mysql_query_dst() {
         local dbname=$1
         shift
         local query="mysql --defaults-extra-file=$izsyncmysql_dst_cfg --batch --skip-column-names --raw '$dbname' --execute='$@' 2>&1"
-        [ $ssh_dst_tunnel = 1 ] && ssh_dst_run "$query" || eval $query
+        [ $ssh_dst_tunnel = 1 ] && ssh_dst_cfg_make && ssh_dst_run "$query" || eval $query
 }
  
 
@@ -119,26 +130,30 @@ main() {
   n=1
   src_db_tot=$(echo "$src_dblist" | awk '{print NF}')
  
+  # set destination db if not defined
   [[ ! -z "$src_db" && -z "$dst_db" ]] && dst_db="$src_db"
+  
+  # unset destination db if syncronizing more than 1 source db
+  [ $src_db_tot -gt 1 ] && unset dst_db
  
-  #ssh_src_uri="ssh://$ssh_src_username@$ssh_src_host:$ssh_src_port"
-  #src_uri="mysql://$src_username@$src_host:$src_port/$src_db"
-  #dst_uri="mysql://$dst_username@$dst_host:$dst_port/$dst_db"
+  ssh_src_uri="ssh://$ssh_src_username@$ssh_src_host:$ssh_src_port"
+  ssh_dst_uri="ssh://$ssh_dst_username@$ssh_dst_host:$ssh_dst_port"
+  src_uri="mysql://$src_username@$src_host:$src_port/$src_db"
+  dst_uri="mysql://$dst_username@$dst_host:$dst_port/$dst_db"
  
   echo "$(log) ----------------------------------------------"
-  [ $ssh_src_tunnel = 1 ] && echo "           Source SSH URI: ssh://$ssh_src_username@$ssh_src_host:$ssh_src_port"
-  echo "         Source MySQL URI: $src_uri"
+  echo -n "           SOURCE:[$src_uri]"
+  [ $ssh_src_tunnel = 1 ] && echo " VIA:[$ssh_src_uri]"
+  echo -n "      DESTINATION:[$dst_uri]"
+  [ $ssh_dst_tunnel = 1 ] && echo " VIA:[$ssh_dst_uri]"
   echo
-  [ $ssh_dst_tunnel = 1 ] && echo "      Destination SSH URI: ssh://$ssh_dst_username@$ssh_dst_host:$ssh_dst_port"
-  echo "    Destination MySQL URI: $dst_uri"
   echo
-  echo "          Database totali: $src_db_tot"
-  echo "Database da sincronizzare: $src_dblist"
-  [ -z "$src_db" ] && echo "         Database esclusi: $(echo $src_db_exclude_list | sed 's/,/ /g')"
-  echo
-  [ $src_uri = $dst_uri ] && echo -e "ERROR: you are cloning a DB into itself... exiting now to avoid data loss" && exit 1
-  echo -e -n "Premere invio per continuare (CTRL-C per cancellare)"; read -n 1
-  echo
+  [[ $src_db_tot -gt 1 && ! -z "$src_db_exclude_list" ]] && echo "Database excluded: $(echo $src_db_exclude_list | sed 's/,/ /g')"
+  [ $src_db_tot -gt 1 ]           && echo "    Database list: $src_dblist"
+  [ $src_db_tot -gt 1 ]           && echo "           DB Tot: $src_db_tot DB"
+  [ $src_uri = $dst_uri ]         && echo "ERROR: you are cloning a DB into itself... exiting now to avoid data loss" && exit 1
+  echo "$(log) ----------------------------------------------"
+  echo -e -n "Press ENTER to continue (CTRL-C to abort)"; read -n 1 ; echo
   echo "$(log) ----------------------------------------------"
 
   # make local mysql config
@@ -170,13 +185,13 @@ main() {
    # drop and recreate empty destination db if specified
    # if destination db exist, drop it before creating
    if [ ! -z "$(mysql_query_dst mysql "SHOW DATABASES LIKE \"$dst_db\";")" ]; then
-     echo "$(log) => dropping destination DB:[${dst_uri}]"
+     echo "$(log) --> dropping destination DB:[${dst_uri}]"
      mysql_query_dst mysql "DROP DATABASE $dst_db;"
    fi
-   echo "$(log) => creating empty DB:[${dst_uri}]"
+   echo "$(log) --> creating empty destination DB:[${dst_uri}]"
    mysql_query_dst mysql "CREATE DATABASE $dst_db;"
 
-   echo "$(log) => importing from source DB:[${src_uri}]$([ $ssh_src_tunnel = 1 ] && echo " (via $ssh_src_uri)") to destination DB:[${dst_uri}]"
+   echo "$(log) --> importing FROM:[${src_uri}] TO:[${dst_uri}]"
    [ $export_views = 0 ] && mysql_viewlist="$(mysql_query_src $src_db "SHOW FULL TABLES IN $src_db WHERE TABLE_TYPE LIKE \"VIEW\";" | awk '{print $1}' | tr -s "\n" " ")"
  
    # export / import db single step
@@ -185,13 +200,16 @@ main() {
    local query_import="mysql --defaults-extra-file=$izsyncmysql_dst_cfg -f $dst_db"
  
    unset sync_cmd
-   [ $ssh_src_tunnel = 1 ] && sync_cmd+="ssh -o StrictHostKeyChecking=no -C -n $ssh_src_username@$ssh_src_host -p $ssh_src_port"
+   [[ $ssh_src_tunnel = 1 && ! -z  "$ssh_src_password" ]] && sync_cmd+=" sshpass -p${ssh_src_password}"
+   [[ $ssh_src_tunnel = 1 ]] && sync_cmd+=" ssh -o StrictHostKeyChecking=no -C -n $ssh_src_username@$ssh_src_host -p $ssh_src_port"
    sync_cmd+=" $query_dump"
    sync_cmd+=" | sed -E -e 's/DEFINER=\`([^\`]+?)\`@\`([^\`]+?)\`/DEFINER=CURRENT_USER/g' -e 's/,NO_AUTO_CREATE_USER//g'"
-   [ $ssh_dst_tunnel = 1 ] && sync_cmd+=" | ssh -o StrictHostKeyChecking=no -C $ssh_dst_username@$ssh_dst_host -p $ssh_dst_port \"cat - |\"" || sync_cmd+="|"
-   sync_cmd+=" $query_import "
+   sync_cmd+=" |"
+   [[ $ssh_dst_tunnel = 1 && ! -z  "$ssh_dst_password" ]] && sync_cmd+=" sshpass -p${ssh_dst_password}"
+   [[ $ssh_dst_tunnel = 1 ]] && sync_cmd+=" ssh -o StrictHostKeyChecking=no -C $ssh_dst_username@$ssh_dst_host -p $ssh_dst_port \"cat - |\""
+   sync_cmd+=" $query_import"
    
-   echo "$(log) => running query: $sync_cmd"
+   echo "$(log) --> running command: $sync_cmd"
 
    eval $sync_cmd
  
@@ -296,19 +314,19 @@ Misc options:
 
 Examples:
   Single DB replication changing the name:
-  $ $0 -s mysql://root:PASSWORD@SOURCE_DB:3306/reacto_initzero -d mysql://root:PASSWORD@DESTINATION_DB:3306/reacto_test
+  $ $0 -s mysql://USERNAME:PASSWORD@SOURCE_DB:3306/reacto_initzero -d mysql://USERNAME:PASSWORD@DESTINATION_DB:3306/reacto_test
 
   All DB replication:
-  $ $0 -s mysql://root:PASSWORD@SOURCE_DB:3306 -d mysql://root:PASSWORD@DESTINATION_DB:3306
+  $ $0 -s mysql://USERNAME:PASSWORD@SOURCE_DB:3306 -d mysql://USERNAME:PASSWORD@DESTINATION_DB:3306
 
   All DB replication with some DB excluded:
-  $ $0 -s mysql://root:PASSWORD@SOURCE_DB:3306 -d mysql://root:PASSWORD@DESTINATION_DB:3306 -e information_schema,performance_schema,sys,mysql,test,reacto_test
+  $ $0 -s mysql://USERNAME:PASSWORD@SOURCE_DB:3306 -d mysql://USERNAME:PASSWORD@DESTINATION_DB:3306 -e information_schema,performance_schema,sys,mysql,test,reacto_test
   
   Single DB replication via SOURCE SSH tunnel:
-  $ $0 -S ssh://root:PASSWORD@REMOTE_SOURCE_SERVER:22 -s mysql://root:PASSWORD@SOURCE_DB:3306/reacto_initzero -d mysql://root:PASSWORD@DESTINATION_DB:3306/reacto_test
+  $ $0 -S ssh://USERNAME:PASSWORD@REMOTE_SOURCE_SERVER:22 -s mysql://USERNAME:PASSWORD@SOURCE_DB:3306/reacto_initzero -d mysql://USERNAME:PASSWORD@DESTINATION_DB:3306/reacto_test
   
   Single DB replication via SOURCE and DESTINATION SSH tunnel:
-  $ $0 -S ssh://root:PASSWORD@REMOTE_SOURCE_SERVER:22 -s mysql://root:PASSWORD@SOURCE_DB:3306/reacto_initzero -D ssh://root:PASSWORD@REMOTE_DESTINATION_SERVER:222 -d mysql://root:PASSWORD@DESTINATION_DB:3306/reacto_test
+  $ $0 -S ssh://USERNAME:PASSWORD@REMOTE_SOURCE_SERVER:22 -s mysql://USERNAME:PASSWORD@SOURCE_DB:3306/reacto_initzero -D ssh://USERNAME:PASSWORD@REMOTE_DESTINATION_SERVER:222 -d mysql://USERNAME:PASSWORD@DESTINATION_DB:3306/reacto_test
 "
 }
 
@@ -389,9 +407,9 @@ if [ ! -z "$src_uri" ]; then
   : ${src_password:=""}
   : ${src_port:="3306"}
   
-  : ${src_db_exclude_list:="information_schema,performance_schema,sys,mysql"}
+  [ ! -z "$src_db" ] && : ${src_db_exclude_list:="information_schema,performance_schema,sys,mysql"} || : ${src_db_exclude_list:=""}
   
-  if [ ! -z "$src_db_exclude" ]; then
+  if [ ! -z "$src_db_exclude_list" ]; then
     unset src_db_exclude
     for db in $(echo "$src_db_exclude_list" | sed 's/,/ /g') ; do
       src_db_exclude+=" -e $db"
