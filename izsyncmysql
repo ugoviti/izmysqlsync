@@ -143,9 +143,9 @@ main() {
  
   echo "$(log) ----------------------------------------------"
   echo -n "           SOURCE:[$src_uri]"
-  [ $ssh_src_tunnel = 1 ] && echo " VIA:[$ssh_src_uri]"
+  [ $ssh_src_tunnel = 1 ] && echo " VIA:[$ssh_src_uri]" || echo
   echo -n "      DESTINATION:[$dst_uri]"
-  [ $ssh_dst_tunnel = 1 ] && echo " VIA:[$ssh_dst_uri]"
+  [ $ssh_dst_tunnel = 1 ] && echo " VIA:[$ssh_dst_uri]" || echo
   echo
   echo
   [[ $src_db_tot -gt 1 && ! -z "$src_db_exclude_list" ]] && echo "Database excluded: $(echo $src_db_exclude_list | sed 's/,/ /g')"
