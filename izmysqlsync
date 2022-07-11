@@ -1,10 +1,10 @@
 #!/bin/bash
-# izsyncmysql
+# izmysqlsync
 # written by Ugo Viti <ugo.viti@initzero.it>
-NAME="izSyncMYSQL"
+NAME="izMySQLSync"
 DESCRIPTION="MySQL database live replication/export/import script"
-VERSION="2.0.1"
-VERSION_DATE="20220127"
+VERSION="2.0.2"
+VERSION_DATE="20220711"
 
 # default vars
 export_views=1
@@ -15,8 +15,8 @@ ssh_dst_tunnel=0
 
 now="$(date +"%Y%m%d-%H%M%S")"
 
-izsyncmysql_src_cfg="/tmp/izsyncmysql_src-$now.cfg"
-izsyncmysql_dst_cfg="/tmp/izsyncmysql_dst-$now.cfg"
+izmysqlsync_src_cfg="/tmp/izmysqlsync_src-$now.cfg"
+izmysqlsync_dst_cfg="/tmp/izmysqlsync_dst-$now.cfg"
 
 #set -x
 
@@ -58,12 +58,12 @@ ssh_src_run() {
 
 ssh_src_cfg_make() {
         #set -x
-        ssh_src_run "echo \"$(print_mysql_client_cfg_src)\" > ${izsyncmysql_src_cfg}"
+        ssh_src_run "echo \"$(print_mysql_client_cfg_src)\" > ${izmysqlsync_src_cfg}"
 }
 
 ssh_src_cfg_rm() {
         #set -x
-        ssh_src_run "rm -f ${izsyncmysql_src_cfg}"
+        ssh_src_run "rm -f ${izmysqlsync_src_cfg}"
 }
 
 
@@ -77,26 +77,26 @@ ssh_dst_run() {
 
 ssh_dst_cfg_make() {
         #set -x
-        ssh_dst_run "echo \"$(print_mysql_client_cfg_dst)\" > ${izsyncmysql_dst_cfg}"
+        ssh_dst_run "echo \"$(print_mysql_client_cfg_dst)\" > ${izmysqlsync_dst_cfg}"
 }
 
 ssh_dst_cfg_rm() {
         #set -x
-        ssh_dst_run "rm -f ${izsyncmysql_dst_cfg}"
+        ssh_dst_run "rm -f ${izmysqlsync_dst_cfg}"
 }
 
 
 mysql_query_src() {
         local dbname=$1
         shift
-        local query="mysql --defaults-extra-file=$izsyncmysql_src_cfg --batch --skip-column-names --raw '$dbname' --execute='$@' 2>&1"
+        local query="mysql --defaults-extra-file=$izmysqlsync_src_cfg --batch --skip-column-names --raw '$dbname' --execute='$@' 2>&1"
         [ $ssh_src_tunnel = 1 ] && ssh_src_cfg_make && ssh_src_run "$query" || eval $query
 }
  
 mysql_query_dst() {
         local dbname=$1
         shift
-        local query="mysql --defaults-extra-file=$izsyncmysql_dst_cfg --batch --skip-column-names --raw '$dbname' --execute='$@' 2>&1"
+        local query="mysql --defaults-extra-file=$izmysqlsync_dst_cfg --batch --skip-column-names --raw '$dbname' --execute='$@' 2>&1"
         [ $ssh_dst_tunnel = 1 ] && ssh_dst_cfg_make && ssh_dst_run "$query" || eval $query
 }
  
@@ -157,18 +157,18 @@ main() {
   echo "$(log) ----------------------------------------------"
 
   # make local mysql config
-  echo "$(log) => saving src credential access into: $izsyncmysql_src_cfg"
-  print_mysql_client_cfg_src > "$izsyncmysql_src_cfg"
-  echo "$(log) => saving dst credential access into: $izsyncmysql_dst_cfg"
-  print_mysql_client_cfg_dst > "$izsyncmysql_dst_cfg"
+  echo "$(log) => saving src credential access into: $izmysqlsync_src_cfg"
+  print_mysql_client_cfg_src > "$izmysqlsync_src_cfg"
+  echo "$(log) => saving dst credential access into: $izmysqlsync_dst_cfg"
+  print_mysql_client_cfg_dst > "$izmysqlsync_dst_cfg"
  
   # make the remote source mysql config
   if [ $ssh_src_tunnel = 1 ]; then
-    echo "$(log) => saving src credential access into remote ssh server: ${ssh_src_uri}${izsyncmysql_src_cfg}"
+    echo "$(log) => saving src credential access into remote ssh server: ${ssh_src_uri}${izmysqlsync_src_cfg}"
     ssh_src_cfg_make
   fi
   if [ $ssh_dst_tunnel = 1 ]; then
-    echo "$(log) => saving dst credential access into remote ssh server: ${ssh_dst_uri}${izsyncmysql_dst_cfg}"
+    echo "$(log) => saving dst credential access into remote ssh server: ${ssh_dst_uri}${izmysqlsync_dst_cfg}"
     ssh_dst_cfg_make
   fi
   echo
@@ -196,8 +196,8 @@ main() {
  
    # export / import db single step
    [ $export_views = 0 ] && local mysqldump_opts_extra=" $(for view in $mysql_viewlist; do echo -n ' --ignore-table=$src_db.$view'; done)"
-   local query_dump="mysqldump --defaults-extra-file=$izsyncmysql_src_cfg $mysqldump_opts $mysqldump_opts_extra $src_db"
-   local query_import="mysql --defaults-extra-file=$izsyncmysql_dst_cfg -f $dst_db"
+   local query_dump="mysqldump --defaults-extra-file=$izmysqlsync_src_cfg $mysqldump_opts $mysqldump_opts_extra $src_db"
+   local query_import="mysql --defaults-extra-file=$izmysqlsync_dst_cfg -f $dst_db"
  
    unset sync_cmd
    [[ $ssh_src_tunnel = 1 && ! -z  "$ssh_src_password" ]] && sync_cmd+=" sshpass -p${ssh_src_password}"
@@ -458,9 +458,9 @@ main
  
 # if we no error occur, then cleanup all temporary files and directories
 if   [[ $ssh_src_tunnel = 1 && $ssh_dst_tunnel = 0 ]]; then
-    trap "rm -f ${izsyncmysql_src_cfg} ${izsyncmysql_dst_cfg} && ssh_src_cfg_rm && exit 0 || exit 1" 0
+    trap "rm -f ${izmysqlsync_src_cfg} ${izmysqlsync_dst_cfg} && ssh_src_cfg_rm && exit 0 || exit 1" 0
 elif [[ $ssh_src_tunnel = 1 && $ssh_dst_tunnel = 1 ]]; then
-    trap "rm -f ${izsyncmysql_src_cfg} ${izsyncmysql_dst_cfg} && ssh_src_cfg_rm && ssh_dst_cfg_rm && exit 0 || exit 1" 0
+    trap "rm -f ${izmysqlsync_src_cfg} ${izmysqlsync_dst_cfg} && ssh_src_cfg_rm && ssh_dst_cfg_rm && exit 0 || exit 1" 0
 elif [[ $ssh_src_tunnel = 0 && $ssh_dst_tunnel = 0 ]]; then
-    trap "rm -f ${izsyncmysql_src_cfg} ${izsyncmysql_dst_cfg} && exit 0 || exit 1" 0
+    trap "rm -f ${izmysqlsync_src_cfg} ${izmysqlsync_dst_cfg} && exit 0 || exit 1" 0
 fi
