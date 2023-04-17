@@ -3,10 +3,11 @@
 # written by Ugo Viti <ugo.viti@initzero.it>
 NAME="izMySQLSync"
 DESCRIPTION="MySQL database live replication/export/import script"
-VERSION="2.0.2"
-VERSION_DATE="20220711"
+VERSION="2.0.3"
+VERSION_DATE="20230417"
 
 # default vars
+force_sync=0
 export_views=1
 
 # by default ssh tunnel is disabled
@@ -21,7 +22,8 @@ izmysqlsync_dst_cfg="/tmp/izmysqlsync_dst-$now.cfg"
 #set -x
 
 # default mysqldump options
-mysqldump_opts="-C --force --opt --quote-names --default-character-set=utf8 --events --routines --triggers --hex-blob --single-transaction --quick --lock-tables=false"
+mysqldump_opts="--force --opt --quote-names --default-character-set=utf8 --events --routines --triggers --hex-blob --single-transaction --quick --lock-tables=false --protocol=TCP"
+mysql_opts="--protocol=TCP"
 
 # if running mariadb doesn't use the following options
 [ -z "$(mysqldump --version | grep -i mariadb)" ] && mysqldump_opts+=" --column-statistics=0"
@@ -89,14 +91,14 @@ ssh_dst_cfg_rm() {
 mysql_query_src() {
         local dbname=$1
         shift
-        local query="mysql --defaults-extra-file=$izmysqlsync_src_cfg --batch --skip-column-names --raw '$dbname' --execute='$@' 2>&1"
+        local query="mysql --defaults-extra-file=$izmysqlsync_src_cfg --batch --skip-column-names --raw $mysql_opts '$dbname' --execute='$@' 2>&1"
         [ $ssh_src_tunnel = 1 ] && ssh_src_cfg_make && ssh_src_run "$query" || eval $query
 }
  
 mysql_query_dst() {
         local dbname=$1
         shift
-        local query="mysql --defaults-extra-file=$izmysqlsync_dst_cfg --batch --skip-column-names --raw '$dbname' --execute='$@' 2>&1"
+        local query="mysql --defaults-extra-file=$izmysqlsync_dst_cfg --batch --skip-column-names --raw $mysql_opts '$dbname' --execute='$@' 2>&1"
         [ $ssh_dst_tunnel = 1 ] && ssh_dst_cfg_make && ssh_dst_run "$query" || eval $query
 }
  
@@ -153,8 +155,10 @@ main() {
   [ $src_db_tot -gt 1 ]           && echo "           DB Tot: $src_db_tot DB"
   [ $src_uri = $dst_uri ]         && echo "ERROR: you are cloning a DB into itself... exiting now to avoid data loss" && exit 1
   echo "$(log) ----------------------------------------------"
+  if [ $force_sync = 0 ]; then
   echo -e -n "Press ENTER to continue (CTRL-C to abort)"; read -n 1 ; echo
   echo "$(log) ----------------------------------------------"
+  fi
 
   # make local mysql config
   echo "$(log) => saving src credential access into: $izmysqlsync_src_cfg"
@@ -197,7 +201,7 @@ main() {
    # export / import db single step
    [ $export_views = 0 ] && local mysqldump_opts_extra=" $(for view in $mysql_viewlist; do echo -n ' --ignore-table=$src_db.$view'; done)"
    local query_dump="mysqldump --defaults-extra-file=$izmysqlsync_src_cfg $mysqldump_opts $mysqldump_opts_extra $src_db"
-   local query_import="mysql --defaults-extra-file=$izmysqlsync_dst_cfg -f $dst_db"
+   local query_import="mysql --defaults-extra-file=$izmysqlsync_dst_cfg $mysql_opts -f $dst_db"
  
    unset sync_cmd
    [[ $ssh_src_tunnel = 1 && ! -z  "$ssh_src_password" ]] && sync_cmd+=" sshpass -p${ssh_src_password}"
@@ -303,6 +307,7 @@ usage: $progname [options]
 
 Option:  Argument:  Description:
 --------------------------------------------------------------------------------
+  -f                Force the execution without confirmation
   -s     <uri>      The URI of the SOURCE MySQL server
   -d     <uri>      The URI of the DESTINATION MySQL server
   -e     <db>       Comma separated list of DB to exclude when syncronizing all DB
@@ -342,7 +347,7 @@ fi
 # Usage: scriptname -options
 # Note: dash (-) necessary
 
-while getopts "s:S:d:D:e:h" option ; do
+while getopts "s:S:d:D:e:fh" option ; do
   case $option in
     s) # source mysql server uri
         src_uri="${OPTARG}"
@@ -360,6 +365,9 @@ while getopts "s:S:d:D:e:h" option ; do
         ;;
     e) # exclude these db
         src_db_exclude_list="${OPTARG}"
+        ;;
+    f) # force the execution without confirmation
+        force_sync=1
         ;;
     h) # display this help menu
         usage
