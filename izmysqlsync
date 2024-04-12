@@ -3,8 +3,8 @@
 # written by Ugo Viti <ugo.viti@initzero.it>
 NAME="izMySQLSync"
 DESCRIPTION="MySQL database live replication/export/import script"
-VERSION="2.0.3"
-VERSION_DATE="20230417"
+VERSION="2.0.4"
+VERSION_DATE="20250412"
 
 # default vars
 force_sync=0
@@ -208,6 +208,7 @@ main() {
    [[ $ssh_src_tunnel = 1 ]] && sync_cmd+=" ssh -o StrictHostKeyChecking=no -C -n $ssh_src_username@$ssh_src_host -p $ssh_src_port"
    sync_cmd+=" $query_dump"
    sync_cmd+=" | sed -E -e 's/DEFINER=\`([^\`]+?)\`@\`([^\`]+?)\`/DEFINER=CURRENT_USER/g' -e 's/,NO_AUTO_CREATE_USER//g'"
+   sync_cmd+=" | sed -E -e 's/ALTER DATABASE \`$src_db\`/ALTER DATABASE \`$dst_db\`/g'"
    sync_cmd+=" |"
    [[ $ssh_dst_tunnel = 1 && ! -z  "$ssh_dst_password" ]] && sync_cmd+=" sshpass -p${ssh_dst_password}"
    [[ $ssh_dst_tunnel = 1 ]] && sync_cmd+=" ssh -o StrictHostKeyChecking=no -C $ssh_dst_username@$ssh_dst_host -p $ssh_dst_port \"cat - |\""
